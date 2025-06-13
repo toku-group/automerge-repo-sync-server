@@ -1,0 +1,2 @@
+docker build -t ghcr.io/toku-group/automerge-repo-sync-server .
+docker push ghcr.io/toku-group/automerge-repo-sync-server:latest
