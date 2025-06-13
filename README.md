@@ -35,3 +35,8 @@ docker rm syncserver
 ## Contributors
 
 Originally written by @pvh.
+
+## License
+
+- Original code: MIT License © 2019-2023 Ink & Switch LLC (see LICENSE)
+- Additional modifications: MIT License © 2025 TOKU GROUP (see NOTICE)
