@@ -12,14 +12,13 @@ COPY package.json ./package.json
 RUN npm install
 
 COPY . .
-up
 EXPOSE 3030
 # NODE_ENV=dev DEBUG=* node ./src/index.js
 ENV NODE_ENV=dev
 ENV DEBUG=*
 CMD [ "node", "./src/index.js" ]
 
-FROM development as dev-envs
+FROM development AS dev-envs
 RUN <<EOF
 apt-get update
 apt-get install -y --no-install-recommends git

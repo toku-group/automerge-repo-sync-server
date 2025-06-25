@@ -1,0 +1,7 @@
+{"timestamp":1750874328786,"level":"INFO","event":"server_start","port":3031,"dataDir":"./test-data"}
+{"timestamp":1750874328814,"level":"WARN","event":"authentication_failure","ip":"::1","reason":"Invalid or missing API token"}
+{"timestamp":1750874328824,"level":"WARN","event":"authentication_failure","ip":"::1","reason":"WebSocket authentication failed"}
+{"timestamp":1750874328826,"level":"INFO","event":"connection_attempt","ip":"::1","userAgent":"unknown","authorized":true}
+{"timestamp":1750874328844,"level":"INFO","event":"server_stop"}
+{"timestamp":1750874328847,"level":"INFO","event":"server_start","port":3031,"dataDir":"./test-data"}
+{"timestamp":1750874331957,"level":"INFO","event":"server_stop"}
