@@ -114,6 +114,56 @@ export class Server {
     app.use(express.static("public"))
     app.use(express.json())
 
+    // Configure CORS
+    const allowedOrigins = process.env.ALLOWED_ORIGINS 
+      ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+      : ['http://localhost:3000', 'http://localhost:5173']
+
+    app.use((req, res, next) => {
+      const origin = req.headers.origin
+      
+      // Check if origin is allowed
+      let isAllowed = false
+      
+      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        isAllowed = true
+      } else {
+        // Check for wildcard patterns
+        for (const allowedOrigin of allowedOrigins) {
+          if (allowedOrigin.includes('*')) {
+            const pattern = allowedOrigin.replace(/\*/g, '.*')
+            const regex = new RegExp(`^${pattern}$`)
+            if (regex.test(origin)) {
+              isAllowed = true
+              break
+            }
+          }
+        }
+        
+        // Also allow devtunnels.ms domains for development
+        if (origin && origin.includes('.devtunnels.ms')) {
+          isAllowed = true
+        }
+      }
+      
+      if (isAllowed) {
+        res.header('Access-Control-Allow-Origin', origin)
+      }
+      
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization')
+      res.header('Access-Control-Allow-Credentials', 'true')
+      
+      // Handle preflight requests
+      if (req.method === 'OPTIONS') {
+        res.sendStatus(200)
+        return
+      }
+      
+      next()
+    })
+
+    console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`)
     console.log(process.env.NODE_ENV);
 
     // Configure storage adapter based on environment variables
@@ -197,7 +247,7 @@ export class Server {
     })
 
     // API endpoint to get a specific project document
-    app.get("/api/projects/:projectId", async (req, res) => {
+    app.get("/api/project/:projectId", async (req, res) => {
       try {
         const { projectId } = req.params
         
@@ -222,6 +272,50 @@ export class Server {
         } else {
           res.status(500).json({ error: 'Failed to fetch project' })
         }
+      }
+    })
+
+    // API endpoint to create a new project
+    app.post("/api/projects", async (req, res) => {
+      try {
+        const { name, description } = req.body
+        
+        // Validate required fields
+        if (!name || typeof name !== 'string' || name.trim().length === 0) {
+          return res.status(400).json({ error: 'Project name is required and must be a non-empty string' })
+        }
+        
+        // Create a new document handle
+        const handle = this.#repo.create()
+        
+        // Initialize the document with project data
+        handle.change(doc => {
+          doc.name = name.trim()
+          if (description && typeof description === 'string') {
+            doc.description = description.trim()
+          }
+          doc.createdAt = new Date().toISOString()
+          doc.lastModified = new Date().toISOString()
+          doc.nodes = [] // Initialize with empty nodes array
+        })
+        
+        // Wait for the document to be ready
+        await handle.whenReady()
+        
+        const projectId = handle.documentId
+        const doc = handle.docSync()
+        
+        console.log(`Created new project: ${projectId} (${name})`)
+        
+        res.status(201).json({
+          projectId,
+          document: doc,
+          heads: handle.heads(),
+          lastModified: this.getLastModified(doc)
+        })
+      } catch (error) {
+        console.error('Error creating project:', error)
+        res.status(500).json({ error: 'Failed to create project' })
       }
     })
 
