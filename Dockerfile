@@ -2,7 +2,7 @@
 FROM node:lts-slim AS development
 
 LABEL org.opencontainers.image.source=https://github.com/toku-group/automerge-repo-sync-server
-LABEL org.opencontainers.image.description="An implementation of automerge-repo-sync-server"
+LABEL org.opencontainers.image.description="An implementation of automerge-repo-sync-server with R2 storage support"
 LABEL org.opencontainers.image.licenses=MIT
 
 # Create app directory
@@ -13,9 +13,13 @@ RUN npm install
 
 COPY . .
 EXPOSE 3030
-# NODE_ENV=dev DEBUG=* node ./src/index.js
-ENV NODE_ENV=dev
-ENV DEBUG=*
+
+# Environment variables for R2 storage (can be overridden)
+ENV NODE_ENV=production
+ENV PORT=3030
+ENV USE_R2_STORAGE=false
+
+# Default command
 CMD [ "node", "./src/index.js" ]
 
 FROM development AS dev-envs

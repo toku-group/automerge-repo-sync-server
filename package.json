@@ -7,11 +7,13 @@
   "scripts": {
     "start": "node ./src/index.js",
     "test": "mocha --exit",
-    "prettier": "prettier -c ."
+    "prettier": "prettier -c .",
+    "dev": "nodemon ./src/index.js"
   },
   "files": [
     "src/index.js",
-    "src/server.js"
+    "src/server.js",
+    "src/storage/R2StorageAdapter.js"
   ],
   "bin": "./src/index.js",
   "dependencies": {
@@ -19,6 +21,8 @@
     "@automerge/automerge-repo": "^1.2.0",
     "@automerge/automerge-repo-network-websocket": "^1.2.0",
     "@automerge/automerge-repo-storage-nodefs": "^1.2.0",
+    "@aws-sdk/client-s3": "^3.846.0",
+    "dotenv": "^17.2.0",
     "express": "^4.18.1",
     "glob": "10.3.10",
     "ws": "^8.7.0"
@@ -26,6 +30,7 @@
   "devDependencies": {
     "@types/express": "^4.17.17",
     "mocha": "^10.2.0",
+    "nodemon": "^3.1.10",
     "prettier": "^3.0.0",
     "ts-node": "^10.9.1",
     "typescript": "^4.7.4"

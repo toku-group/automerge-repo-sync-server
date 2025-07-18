@@ -12,10 +12,55 @@ server.
 
 `npx @automerge/automerge-repo-sync-server`
 
-The server is configured with environment variables. There are two options:
+The server is configured with environment variables.
 
+### Configuration Options
+
+#### Basic Configuration
+- `PORT` - the port to listen for websocket connections on (default: 3030)
+- `NODE_ENV` - environment mode (development/production)
+
+#### WebSocket Resource Management
+- `MAX_CONNECTIONS` - maximum number of concurrent WebSocket connections (default: 100)
+- `HEARTBEAT_INTERVAL` - WebSocket heartbeat interval in milliseconds (default: 30000)
+
+### Storage Options
+
+The server supports two storage backends:
+
+#### 1. Filesystem Storage (Default)
 - `PORT` - the port to listen for websocket connections on
 - `DATA_DIR` - the directory to store saved documents in
+
+#### 2. Cloudflare R2 Storage
+To use Cloudflare R2 for storage, set the following environment variables:
+
+- `USE_R2_STORAGE=true` - Enable R2 storage
+- `R2_ACCOUNT_ID` - Your Cloudflare account ID
+- `R2_ACCESS_KEY_ID` - R2 access key ID
+- `R2_SECRET_ACCESS_KEY` - R2 secret access key
+- `R2_BUCKET_NAME` - R2 bucket name
+- `R2_PREFIX` - Optional prefix for all storage keys (default: "automerge-repo")
+
+Example R2 configuration:
+```bash
+USE_R2_STORAGE=true
+R2_ACCOUNT_ID=your-cloudflare-account-id
+R2_ACCESS_KEY_ID=your-r2-access-key-id
+R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+R2_BUCKET_NAME=your-r2-bucket-name
+R2_PREFIX=automerge-repo
+```
+
+### Setting up Cloudflare R2
+
+1. Create a Cloudflare account and go to the R2 dashboard
+2. Create a new R2 bucket
+3. Generate R2 API tokens:
+   - Go to "Manage R2 API tokens"
+   - Create a new token with "Object Read & Write" permissions
+   - Note down the Access Key ID and Secret Access Key
+4. Set the environment variables as shown above
 
 ## Running in Docker
 

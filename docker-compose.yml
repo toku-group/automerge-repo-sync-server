@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  automerge-sync-server:
+    build: .
+    ports:
+      - "3030:3030"
+    environment:
+      - NODE_ENV=production
+      - PORT=3030
+      
+      # WebSocket resource limits
+      - MAX_CONNECTIONS=100
+      - HEARTBEAT_INTERVAL=30000
+      
+      # For R2 storage, uncomment and configure these:
+      # - USE_R2_STORAGE=true
+      # - R2_ACCOUNT_ID=your-cloudflare-account-id
+      # - R2_ACCESS_KEY_ID=your-r2-access-key-id
+      # - R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+      # - R2_BUCKET_NAME=your-r2-bucket-name
+      # - R2_PREFIX=automerge-repo
+      
+      # For filesystem storage (default):
+      - DATA_DIR=/data
+    volumes:
+      # Only needed for filesystem storage
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3030"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
