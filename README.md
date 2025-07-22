@@ -1,12 +1,24 @@
 # Automerge Repo Sync Server
 
-A very simple automerge-repo synchronization server. It pairs with the
+A collaborative document sync server using Automerge CRDT with REST API for project management and WebSocket for real-time synchronization. It pairs with the
 websocket client protocol found in
 `@automerge/automerge-repo-network-websocket`.
 
-The server is an unsecured [Express](https://expressjs.com/) app. It is partly
-for demonstration purposes but it's also a reasonable way to run a public sync
-server.
+The server is an [Express](https://expressjs.com/) app with CORS support and comprehensive API documentation.
+
+## API Documentation
+
+The server includes comprehensive OpenAPI 3.0 documentation with Swagger UI:
+
+- **Swagger UI**: `http://localhost:3030/api-docs`
+- **OpenAPI Spec**: `http://localhost:3030/api-docs.json`
+
+### Available Endpoints
+
+- `GET /api/projects` - List all projects
+- `POST /api/projects` - Create a new project  
+- `GET /api/project/:projectId` - Get specific project
+- WebSocket `/` - Real-time document synchronization
 
 ## Running the sync server
 
@@ -19,6 +31,9 @@ The server is configured with environment variables.
 #### Basic Configuration
 - `PORT` - the port to listen for websocket connections on (default: 3030)
 - `NODE_ENV` - environment mode (development/production)
+
+#### CORS Configuration
+- `ALLOWED_ORIGINS` - comma-separated list of allowed origins for CORS
 
 #### WebSocket Resource Management
 - `MAX_CONNECTIONS` - maximum number of concurrent WebSocket connections (default: 100)

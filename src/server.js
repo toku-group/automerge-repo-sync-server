@@ -9,6 +9,8 @@ import { Repo } from "@automerge/automerge-repo"
 import { NodeWSServerAdapter } from "@automerge/automerge-repo-network-websocket"
 import { NodeFSStorageAdapter } from "@automerge/automerge-repo-storage-nodefs"
 import { R2StorageAdapter } from "./storage/R2StorageAdapter.js"
+import swaggerJsdoc from "swagger-jsdoc"
+import swaggerUi from "swagger-ui-express"
 import os from "os"
 
 export class Server {
@@ -125,7 +127,10 @@ export class Server {
       // Check if origin is allowed
       let isAllowed = false
       
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      // Always allow requests to API documentation
+      if (req.path.startsWith('/api-docs')) {
+        isAllowed = true
+      } else if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
         isAllowed = true
       } else {
         // Check for wildcard patterns
@@ -144,10 +149,15 @@ export class Server {
         if (origin && origin.includes('.devtunnels.ms')) {
           isAllowed = true
         }
+        
+        // Allow localhost for development
+        if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+          isAllowed = true
+        }
       }
       
       if (isAllowed) {
-        res.header('Access-Control-Allow-Origin', origin)
+        res.header('Access-Control-Allow-Origin', origin || '*')
       }
       
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
@@ -165,6 +175,160 @@ export class Server {
 
     console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`)
     console.log(process.env.NODE_ENV);
+
+    // Configure Swagger/OpenAPI documentation
+    const swaggerOptions = {
+      definition: {
+        openapi: '3.0.0',
+        info: {
+          title: 'Automerge Repo Sync Server API',
+          version: '0.2.8',
+          description: 'A collaborative document sync server using Automerge CRDT with REST API for project management and WebSocket for real-time synchronization.',
+          contact: {
+            name: 'Toku Group',
+            url: 'https://tokugroup.com'
+          }
+        },
+        servers: [
+          {
+            url: `http://localhost:${PORT}`,
+            description: 'Local development server'
+          },
+          {
+            url: process.env.SERVER_HOST ? `https://${process.env.SERVER_HOST}` : `http://localhost:${PORT}`,
+            description: process.env.NODE_ENV === 'production' ? 'Production server' : 'Development server'
+          }
+        ],
+        components: {
+          schemas: {
+            Project: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'Unique project identifier (automerge document ID)',
+                  example: '2h8kDmTxXBV7E6HdUzu9Pu3FQ7Qd'
+                },
+                name: {
+                  type: 'string',
+                  description: 'Project name',
+                  example: 'My Project'
+                },
+                description: {
+                  type: 'string',
+                  nullable: true,
+                  description: 'Optional project description',
+                  example: 'A collaborative project'
+                },
+                lastModified: {
+                  type: 'string',
+                  format: 'date-time',
+                  nullable: true,
+                  description: 'Last modification timestamp',
+                  example: '2025-07-18T19:47:38.565Z'
+                },
+                nodeCount: {
+                  type: 'integer',
+                  nullable: true,
+                  description: 'Number of nodes/elements in the project',
+                  example: 5
+                }
+              },
+              required: ['id', 'name']
+            },
+            ProjectDocument: {
+              type: 'object',
+              properties: {
+                projectId: {
+                  type: 'string',
+                  description: 'Project identifier',
+                  example: '2h8kDmTxXBV7E6HdUzu9Pu3FQ7Qd'
+                },
+                document: {
+                  type: 'object',
+                  description: 'Complete automerge document',
+                  properties: {
+                    name: { type: 'string' },
+                    description: { type: 'string', nullable: true },
+                    createdAt: { type: 'string', format: 'date-time' },
+                    lastModified: { type: 'string', format: 'date-time' },
+                    nodes: { type: 'array', items: { type: 'object' } }
+                  }
+                },
+                heads: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Automerge document heads for synchronization',
+                  example: ['f4f03786c44cb06ef5a79ff0fb296e3e9f91517a8657a725ad334697fc191ad3']
+                },
+                lastModified: {
+                  type: 'string',
+                  format: 'date-time',
+                  nullable: true,
+                  example: '2025-07-18T19:47:38.565Z'
+                }
+              }
+            },
+            CreateProjectRequest: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Project name (required)',
+                  example: 'New Project'
+                },
+                description: {
+                  type: 'string',
+                  description: 'Optional project description',
+                  example: 'A new collaborative project'
+                }
+              },
+              required: ['name']
+            },
+            Error: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Error message',
+                  example: 'Project not found'
+                }
+              }
+            }
+          }
+        }
+      },
+      apis: ['./src/server.js'] // Path to the API files
+    };
+
+    const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+    // Serve Swagger UI
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'Automerge Sync Server API',
+      swaggerOptions: {
+        persistAuthorization: true,
+        tryItOutEnabled: true,
+        filter: true,
+        requestInterceptor: (req) => {
+          // Ensure proper CORS headers for Swagger UI requests
+          req.headers['Access-Control-Allow-Origin'] = '*';
+          return req;
+        }
+      }
+    }));
+
+    // Serve OpenAPI spec as JSON
+    app.get('/api-docs.json', (req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+      res.send(swaggerSpec);
+    });
+
+    console.log(`API documentation available at: http://localhost:${PORT}/api-docs`);
 
     // Configure storage adapter based on environment variables
     let storageAdapter
@@ -213,6 +377,95 @@ export class Server {
       res.send(`👍 @automerge/automerge-repo-sync-server is running`)
     })
 
+    /**
+     * @swagger
+     * tags:
+     *   - name: Projects
+     *     description: Project management operations
+     *   - name: System
+     *     description: System information and health checks
+     *   - name: WebSocket
+     *     description: Real-time synchronization (WebSocket protocol)
+     */
+
+    /**
+     * @swagger
+     * /:
+     *   get:
+     *     summary: Health check
+     *     description: Simple health check endpoint to verify the server is running
+     *     tags: [System]
+     *     responses:
+     *       200:
+     *         description: Server is running
+     *         content:
+     *           text/plain:
+     *             schema:
+     *               type: string
+     *               example: "👍 @automerge/automerge-repo-sync-server is running"
+     */
+
+    /**
+     * @swagger
+     * /ws:
+     *   get:
+     *     summary: WebSocket connection for real-time sync
+     *     description: |
+     *       Establish a WebSocket connection for real-time document synchronization.
+     *       
+     *       **Connection Details:**
+     *       - Protocol: WebSocket
+     *       - URL: `ws://localhost:3030` (development) or `wss://your-domain.com` (production)
+     *       - Subprotocol: automerge-repo
+     *       
+     *       **Usage:**
+     *       ```javascript
+     *       const ws = new WebSocket('ws://localhost:3030');
+     *       ws.onopen = () => console.log('Connected to sync server');
+     *       ws.onmessage = (event) => console.log('Sync message:', event.data);
+     *       ```
+     *       
+     *       **Features:**
+     *       - Real-time document synchronization
+     *       - Conflict-free collaborative editing
+     *       - Automatic reconnection handling
+     *       - Connection limits and heartbeat monitoring
+     *     tags: [WebSocket]
+     *     responses:
+     *       101:
+     *         description: WebSocket connection established
+     *       429:
+     *         description: Connection limit exceeded
+     *       500:
+     *         description: Server error
+     */
+
+    /**
+     * @swagger
+     * /api/projects:
+     *   get:
+     *     summary: List all projects
+     *     description: Retrieve a list of all available automerge projects with metadata
+     *     tags: [Projects]
+     *     responses:
+     *       200:
+     *         description: List of projects retrieved successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 projects:
+     *                   type: array
+     *                   items:
+     *                     $ref: '#/components/schemas/Project'
+     *       500:
+     *         description: Server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     */
     // API endpoint to list all projects
     app.get("/api/projects", async (req, res) => {
       try {
@@ -246,6 +499,41 @@ export class Server {
       }
     })
 
+    /**
+     * @swagger
+     * /api/project/{projectId}:
+     *   get:
+     *     summary: Get a specific project
+     *     description: Retrieve a complete automerge document for a specific project
+     *     tags: [Projects]
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         description: Unique project identifier
+     *         schema:
+     *           type: string
+     *           example: "2h8kDmTxXBV7E6HdUzu9Pu3FQ7Qd"
+     *     responses:
+     *       200:
+     *         description: Project retrieved successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ProjectDocument'
+     *       404:
+     *         description: Project not found
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     */
     // API endpoint to get a specific project document
     app.get("/api/project/:projectId", async (req, res) => {
       try {
@@ -275,6 +563,54 @@ export class Server {
       }
     })
 
+    /**
+     * @swagger
+     * /api/projects:
+     *   post:
+     *     summary: Create a new project
+     *     description: Create a new automerge document with project metadata
+     *     tags: [Projects]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             $ref: '#/components/schemas/CreateProjectRequest'
+     *           examples:
+     *             basic:
+     *               summary: Basic project
+     *               value:
+     *                 name: "My New Project"
+     *                 description: "A collaborative project"
+     *             minimal:
+     *               summary: Minimal project
+     *               value:
+     *                 name: "Simple Project"
+     *     responses:
+     *       201:
+     *         description: Project created successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ProjectDocument'
+     *       400:
+     *         description: Invalid request body
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *             examples:
+     *               missing_name:
+     *                 summary: Missing project name
+     *                 value:
+     *                   error: "Project name is required and must be a non-empty string"
+     *       500:
+     *         description: Server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     */
     // API endpoint to create a new project
     app.post("/api/projects", async (req, res) => {
       try {
@@ -316,6 +652,109 @@ export class Server {
       } catch (error) {
         console.error('Error creating project:', error)
         res.status(500).json({ error: 'Failed to create project' })
+      }
+    })
+
+    /**
+     * @swagger
+     * /api/project/{projectId}:
+     *   delete:
+     *     summary: Delete a project
+     *     description: |
+     *       Permanently delete an automerge project and all its associated data.
+     *       
+     *       **Warning:** This operation is irreversible and will remove:
+     *       - The project document from storage
+     *       - All document history and snapshots
+     *       - Any active WebSocket connections for this document
+     *       
+     *       Use with caution in production environments.
+     *     tags: [Projects]
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         description: Unique project identifier to delete
+     *         schema:
+     *           type: string
+     *           example: "2h8kDmTxXBV7E6HdUzu9Pu3FQ7Qd"
+     *     responses:
+     *       200:
+     *         description: Project deleted successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "Project deleted successfully"
+     *                 projectId:
+     *                   type: string
+     *                   example: "2h8kDmTxXBV7E6HdUzu9Pu3FQ7Qd"
+     *                 deletedAt:
+     *                   type: string
+     *                   format: date-time
+     *                   example: "2025-07-19T10:30:00.000Z"
+     *       404:
+     *         description: Project not found
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *             example:
+     *               error: "Project not found"
+     *       500:
+     *         description: Server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *             example:
+     *               error: "Failed to delete project"
+     */
+    // API endpoint to delete a project
+    app.delete("/api/project/:projectId", async (req, res) => {
+      try {
+        const { projectId } = req.params
+        
+        // First, check if the project exists
+        const handle = this.#repo.find(projectId)
+        await handle.whenReady()
+        
+        if (!handle.docSync()) {
+          return res.status(404).json({ error: 'Project not found' })
+        }
+        
+        // Get project info before deletion for logging
+        const doc = handle.docSync()
+        const projectName = doc.name || projectId
+        
+        // Delete from storage adapter
+        const deleteResult = await this.deleteProjectFromStorage(this.#storageAdapter, projectId)
+        
+        if (!deleteResult.success) {
+          console.error(`Failed to delete project ${projectId} from storage:`, deleteResult.error)
+          return res.status(500).json({ error: 'Failed to delete project from storage' })
+        }
+        
+        // Remove from repo cache
+        this.#repo.delete(projectId)
+        
+        console.log(`Deleted project: ${projectId} (${projectName})`)
+        
+        res.json({
+          message: 'Project deleted successfully',
+          projectId,
+          deletedAt: new Date().toISOString()
+        })
+      } catch (error) {
+        console.error('Error deleting project:', error)
+        if (error.message && error.message.includes('not found')) {
+          res.status(404).json({ error: 'Project not found' })
+        } else {
+          res.status(500).json({ error: 'Failed to delete project' })
+        }
       }
     })
 
@@ -391,6 +830,65 @@ export class Server {
     } catch (error) {
       console.warn('Error getting document IDs:', error)
       return []
+    }
+  }
+
+  /**
+   * Delete a project from the storage adapter
+   * @param {*} storageAdapter 
+   * @param {string} projectId 
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async deleteProjectFromStorage(storageAdapter, projectId) {
+    try {
+      if (storageAdapter instanceof R2StorageAdapter) {
+        // For R2 storage, delete all objects with the project prefix
+        return await storageAdapter.deleteDocument(projectId)
+      } else if (storageAdapter instanceof NodeFSStorageAdapter) {
+        // For filesystem storage, remove the project directory
+        return await this.deleteFromFilesystem(storageAdapter, projectId)
+      } else {
+        console.warn('Unknown storage adapter type, cannot delete project')
+        return { success: false, error: 'Unsupported storage adapter' }
+      }
+    } catch (error) {
+      console.error('Error deleting project from storage:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  /**
+   * Delete a project from filesystem storage
+   * @param {NodeFSStorageAdapter} storageAdapter 
+   * @param {string} projectId 
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async deleteFromFilesystem(storageAdapter, projectId) {
+    try {
+      const dir = storageAdapter.path || '.amrg'
+      
+      // Find and remove the project directory
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const subDir = `${dir}/${entry.name}`
+          const projectPath = `${subDir}/${projectId}`
+          
+          if (fs.existsSync(projectPath)) {
+            // Remove the entire project directory
+            fs.rmSync(projectPath, { recursive: true, force: true })
+            console.log(`Deleted project directory: ${projectPath}`)
+            return { success: true }
+          }
+        }
+      }
+      
+      // Project not found in filesystem
+      return { success: false, error: 'Project not found in filesystem' }
+    } catch (error) {
+      console.error('Error deleting from filesystem:', error)
+      return { success: false, error: error.message }
     }
   }
 

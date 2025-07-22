@@ -265,4 +265,61 @@ export class R2StorageAdapter {
 
     return Array.from(documentIds)
   }
+
+  /**
+   * Delete all objects for a specific document ID
+   * @param {string} documentId 
+   * @returns {Promise<{success: boolean, error?: string, deletedCount?: number}>}
+   */
+  async deleteDocument(documentId) {
+    try {
+      const deletedObjects = []
+      let continuationToken
+      
+      // First, list all objects for this document
+      do {
+        const listCommand = new ListObjectsV2Command({
+          Bucket: this.#bucket,
+          Prefix: this.#prefix ? `${this.#prefix}/${documentId}/` : `${documentId}/`,
+          ContinuationToken: continuationToken,
+        })
+        
+        const listResponse = await this.#client.send(listCommand)
+        
+        if (listResponse.Contents && listResponse.Contents.length > 0) {
+          // Delete objects in batches (R2 supports batch delete)
+          for (const object of listResponse.Contents) {
+            if (object.Key) {
+              try {
+                const deleteCommand = new DeleteObjectCommand({
+                  Bucket: this.#bucket,
+                  Key: object.Key,
+                })
+                
+                await this.#client.send(deleteCommand)
+                deletedObjects.push(object.Key)
+                console.log(`Deleted object: ${object.Key}`)
+              } catch (deleteError) {
+                console.error(`Error deleting object ${object.Key}:`, deleteError)
+              }
+            }
+          }
+        }
+        
+        // @ts-ignore - NextContinuationToken exists on ListObjectsV2CommandOutput
+        continuationToken = listResponse.NextContinuationToken
+      } while (continuationToken)
+      
+      if (deletedObjects.length === 0) {
+        return { success: false, error: 'No objects found for this document ID', deletedCount: 0 }
+      }
+      
+      console.log(`Successfully deleted ${deletedObjects.length} objects for document ${documentId}`)
+      return { success: true, deletedCount: deletedObjects.length }
+      
+    } catch (error) {
+      console.error('Error deleting document from R2:', error)
+      return { success: false, error: error.message }
+    }
+  }
 }
