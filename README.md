@@ -1,10 +1,50 @@
 # Automerge Repo Sync Server
 
-A collaborative document sync server using Automerge CRDT with REST API for project management and WebSocket for real-time synchronization. It pairs with the
-websocket client protocol found in
-`@automerge/automerge-repo-network-websocket`.
+A collaborative document sync server using Automerge CRDT with JWT authentication, PostgreSQL database support, REST API for project management and WebSocket for real-time synchronization. It pairs with the websocket client protocol found in `@automerge/automerge-repo-network-websocket`.
 
 The server is an [Express](https://expressjs.com/) app with CORS support and comprehensive API documentation.
+
+## Features
+
+- **JWT Authentication** - Secure token-based authentication with refresh tokens
+- **PostgreSQL Database** - Production-ready user management with automatic fallback to file-based storage
+- **Role-based Permissions** - Admin, read, write, delete permissions
+- **Real-time Sync** - WebSocket-based document synchronization with authentication
+- **REST API** - Complete project management with OpenAPI documentation
+- **Audit Logging** - Security event tracking and monitoring
+- **Health Monitoring** - Database and service health checks
+
+## Authentication
+
+The server includes a complete JWT authentication system:
+
+- **User Management** - Create, authenticate, and manage users
+- **Token-based Auth** - Access tokens (24h) and refresh tokens (7d)
+- **WebSocket Auth** - Secure real-time connections
+- **Password Security** - PBKDF2 hashing with salt
+- **Audit Trail** - Login attempts and security events
+
+### Quick Start with Authentication
+
+1. Start the server: `npm start`
+2. Default admin user is created automatically:
+   - Username: `admin`
+   - Password: `admin123` (change immediately!)
+3. Login: `POST /auth/login` with credentials
+4. Use access token in `Authorization: Bearer <token>` header
+
+## Database Support
+
+### PostgreSQL (Recommended for Production)
+- Full-featured user management with PostgreSQL database
+- Automatic schema creation and migration
+- Connection pooling and health monitoring
+- See [PostgreSQL Setup Guide](docs/POSTGRESQL_SETUP.md) for configuration
+
+### File-based Fallback
+- Automatic fallback when PostgreSQL is unavailable
+- Zero configuration required
+- Perfect for development and testing
 
 ## API Documentation
 

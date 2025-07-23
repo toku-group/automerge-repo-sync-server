@@ -1,0 +1,40 @@
+{
+	"name": "Automerge Sync Server (Simple)",
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+
+	"features": {
+		"ghcr.io/devcontainers/features/postgresql-client:1": {},
+		"ghcr.io/devcontainers/features/postgresql-server:latest": {
+			"version": "15",
+			"postgresUser": "postgres",
+			"postgresPassword": "postgres",
+			"postgresDatabase": "automerge_sync"
+		}
+	},
+
+	"forwardPorts": [3030, 5432],
+
+	"postCreateCommand": "npm install && sudo service postgresql start && sleep 5 && npm run setup:db",
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.vscode-json",
+				"bradlc.vscode-tailwindcss", 
+				"esbenp.prettier-vscode",
+				"ms-vscode.vscode-typescript-next",
+				"ckolkman.vscode-postgres"
+			]
+		}
+	},
+
+	"containerEnv": {
+		"DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/automerge_sync",
+		"DB_HOST": "localhost", 
+		"DB_PORT": "5432",
+		"DB_NAME": "automerge_sync",
+		"DB_USER": "postgres",
+		"DB_PASSWORD": "postgres",
+		"NODE_ENV": "development"
+	}
+}
