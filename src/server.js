@@ -4,6 +4,7 @@ console.log(process.env)
 // @ts-check
 import fs from "fs"
 import express from "express"
+import cors from "cors"
 import { WebSocketServer } from "ws"
 import { Repo } from "@automerge/automerge-repo"
 import { NodeWSServerAdapter } from "@automerge/automerge-repo-network-websocket"
@@ -31,6 +32,7 @@ import {
   getUser 
 } from "./auth/users.js"
 import { getUserService } from "./auth/DatabaseUserService.js"
+import { getProjectService } from "./database/ProjectService.js"
 
 export class Server {
   /** @type WebSocketServer */
@@ -47,6 +49,12 @@ export class Server {
   /** @type Repo */
   #repo
 
+  /** @type {import("@automerge/automerge-repo").StorageAdapterInterface} */
+  #storageAdapter
+
+  /** @type {import("./database/ProjectService.js").ProjectService} */
+  #projectService
+
   constructor() {
     var hostname = os.hostname()
 
@@ -54,6 +62,11 @@ export class Server {
     console.log('Initializing JWT authentication system...')
     this.initializeAuthSystem()
     console.log('✅ Authentication system ready')
+
+    // Initialize project service
+    console.log('Initializing project management system...')
+    this.initializeProjectService()
+    console.log('✅ Project management system ready')
 
     // Configure WebSocket server with resource limits
     const maxConnections = process.env.MAX_CONNECTIONS ? parseInt(process.env.MAX_CONNECTIONS) : 100
@@ -153,6 +166,43 @@ export class Server {
     const PORT =
       process.env.PORT !== undefined ? parseInt(process.env.PORT) : 3030
     const app = express()
+
+    // Configure CORS
+    const allowedOrigins = process.env.ALLOWED_ORIGINS 
+      ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+      : ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:3030']
+    
+    const corsOptions = {
+      origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true)
+        
+        // Check if the origin is allowed
+        const isAllowed = allowedOrigins.some(allowedOrigin => {
+          // Support wildcard subdomains
+          if (allowedOrigin.includes('*')) {
+            const pattern = allowedOrigin.replace(/\*/g, '.*')
+            const regex = new RegExp(`^${pattern}$`)
+            return regex.test(origin)
+          }
+          return allowedOrigin === origin
+        })
+        
+        if (isAllowed) {
+          callback(null, true)
+        } else {
+          console.warn(`CORS blocked request from origin: ${origin}`)
+          callback(new Error('Not allowed by CORS'))
+        }
+      },
+      credentials: true, // Allow cookies and authorization headers
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      exposedHeaders: ['Content-Length', 'X-Total-Count'],
+      maxAge: 86400 // Cache preflight response for 24 hours
+    }
+
+    app.use(cors(corsOptions))
     app.use(express.static("public"))
     app.use(express.json()) // Add JSON parsing middleware
 
@@ -170,11 +220,37 @@ export class Server {
             name: 'API Support',
             url: 'https://github.com/toku-group/automerge-repo-sync-server',
           },
+          license: {
+            name: 'MIT',
+            url: 'https://opensource.org/licenses/MIT',
+          },
         },
         servers: [
           {
             url: `http://localhost:${PORT}`,
             description: 'Development server',
+          },
+        ],
+        tags: [
+          {
+            name: 'System',
+            description: 'System health and information endpoints',
+          },
+          {
+            name: 'WebSocket',
+            description: 'WebSocket connection and real-time synchronization',
+          },
+          {
+            name: 'Authentication',
+            description: 'User authentication and authorization endpoints',
+          },
+          {
+            name: 'User Management',
+            description: 'User administration and management endpoints (admin only)',
+          },
+          {
+            name: 'Projects',
+            description: 'Project and document management endpoints',
           },
         ],
         components: {
@@ -183,6 +259,207 @@ export class Server {
               type: 'http',
               scheme: 'bearer',
               bearerFormat: 'JWT',
+              description: 'JWT Bearer token authentication. Use the login form above to authenticate and get a token, or manually enter your JWT token here.',
+            },
+          },
+          schemas: {
+            LoginRequest: {
+              type: 'object',
+              required: ['username', 'password'],
+              properties: {
+                username: {
+                  type: 'string',
+                  description: 'Username',
+                  example: 'admin',
+                },
+                password: {
+                  type: 'string',
+                  description: 'Password',
+                  example: 'admin123',
+                },
+              },
+            },
+            LoginResponse: {
+              type: 'object',
+              properties: {
+                message: {
+                  type: 'string',
+                  example: 'Login successful',
+                },
+                accessToken: {
+                  type: 'string',
+                  description: 'JWT access token for API authentication',
+                },
+                refreshToken: {
+                  type: 'string',
+                  description: 'JWT refresh token for obtaining new access tokens',
+                },
+                user: {
+                  type: 'object',
+                  properties: {
+                    username: {
+                      type: 'string',
+                    },
+                    permissions: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            Error: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Error message',
+                },
+                code: {
+                  type: 'string',
+                  description: 'Error code (for authentication errors)',
+                },
+                details: {
+                  type: 'string',
+                  description: 'Additional error details (only in development mode)',
+                },
+              },
+              required: ['error'],
+            },
+            DatabaseError: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Database error message',
+                  example: 'Failed to retrieve projects',
+                },
+                details: {
+                  type: 'string',
+                  description: 'Technical error details (development mode only)',
+                  example: 'invalid input syntax for type uuid: "invalid-uuid-format"',
+                },
+              },
+              required: ['error'],
+            },
+            ValidationError: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Validation error message',
+                  example: 'Project name is required',
+                },
+              },
+              required: ['error'],
+            },
+            ConflictError: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Conflict error message',
+                  example: 'A project with this name already exists',
+                },
+              },
+              required: ['error'],
+            },
+            AuthenticationError: {
+              type: 'object',
+              properties: {
+                error: {
+                  type: 'string',
+                  description: 'Authentication error message',
+                  example: 'Access token required',
+                },
+                code: {
+                  type: 'string',
+                  description: 'Authentication error code',
+                  enum: ['MISSING_TOKEN', 'INVALID_TOKEN', 'EXPIRED_TOKEN'],
+                  example: 'MISSING_TOKEN',
+                },
+              },
+              required: ['error'],
+            },
+            User: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'User ID',
+                },
+                username: {
+                  type: 'string',
+                  description: 'Username',
+                },
+                email: {
+                  type: 'string',
+                  format: 'email',
+                  description: 'Email address',
+                },
+                permissions: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                  },
+                  description: 'User permissions',
+                },
+                is_active: {
+                  type: 'boolean',
+                  description: 'Whether the user is active',
+                },
+                created_at: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'User creation timestamp',
+                },
+                last_login: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'Last login timestamp',
+                },
+              },
+            },
+            Project: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'Project/Document ID',
+                },
+                name: {
+                  type: 'string',
+                  description: 'Project name',
+                },
+                title: {
+                  type: 'string',
+                  description: 'Document title (if available)',
+                },
+                description: {
+                  type: 'string',
+                  description: 'Project description',
+                },
+                created: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'Creation timestamp',
+                },
+                lastModified: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'Last modification timestamp',
+                },
+                documentType: {
+                  type: 'string',
+                  description: 'Type of document',
+                },
+                status: {
+                  type: 'string',
+                  description: 'Document status',
+                },
+              },
             },
           },
         },
@@ -196,7 +473,233 @@ export class Server {
     };
 
     const specs = swaggerJsdoc(swaggerOptions);
-    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+    
+    // Custom Swagger UI setup with login functionality
+    const swaggerUiOptions = {
+      customCss: `
+        .swagger-ui .topbar { display: none; }
+        #swagger-login-form {
+          background: #fafafa;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          padding: 20px;
+          margin: 20px 0;
+          max-width: 400px;
+        }
+        #swagger-login-form h3 {
+          margin-top: 0;
+          color: #3b4151;
+        }
+        #swagger-login-form input {
+          width: 100%;
+          padding: 8px 12px;
+          margin: 8px 0;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+          box-sizing: border-box;
+        }
+        #swagger-login-form button {
+          background-color: #4CAF50;
+          color: white;
+          padding: 10px 20px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          margin-right: 10px;
+        }
+        #swagger-login-form button:hover {
+          background-color: #45a049;
+        }
+        #swagger-login-form .logout-btn {
+          background-color: #f44336;
+        }
+        #swagger-login-form .logout-btn:hover {
+          background-color: #da190b;
+        }
+        #login-status {
+          margin: 10px 0;
+          padding: 8px;
+          border-radius: 4px;
+        }
+        .status-success {
+          background-color: #d4edda;
+          color: #155724;
+          border: 1px solid #c3e6cb;
+        }
+        .status-error {
+          background-color: #f8d7da;
+          color: #721c24;
+          border: 1px solid #f5c6cb;
+        }
+        .status-info {
+          background-color: #d1ecf1;
+          color: #0c5460;
+          border: 1px solid #bee5eb;
+        }
+      `,
+      customJs: `
+        window.onload = function() {
+          // Wait for Swagger UI to load
+          setTimeout(function() {
+            const ui = window.ui;
+            
+            // Add login form to the page
+            const loginForm = document.createElement('div');
+            loginForm.id = 'swagger-login-form';
+            loginForm.innerHTML = \`
+              <h3>🔐 API Authentication</h3>
+              <div id="login-status"></div>
+              <div id="login-fields">
+                <input type="text" id="username" placeholder="Username (default: admin)" />
+                <input type="password" id="password" placeholder="Password (default: admin123)" />
+                <button onclick="swaggerLogin()">Login</button>
+              </div>
+              <div id="logout-section" style="display: none;">
+                <p><strong>Logged in as:</strong> <span id="current-user"></span></p>
+                <button class="logout-btn" onclick="swaggerLogout()">Logout</button>
+              </div>
+            \`;
+            
+            // Insert the login form at the top of the Swagger UI
+            const swaggerContainer = document.querySelector('.swagger-ui');
+            if (swaggerContainer) {
+              swaggerContainer.insertBefore(loginForm, swaggerContainer.firstChild);
+            }
+            
+            // Check if user is already logged in
+            const token = localStorage.getItem('swagger-jwt-token');
+            if (token) {
+              validateAndSetToken(token);
+            }
+            
+            // Global login function
+            window.swaggerLogin = function() {
+              const username = document.getElementById('username').value || 'admin';
+              const password = document.getElementById('password').value || 'admin123';
+              
+              showStatus('Logging in...', 'info');
+              
+              fetch('/auth/login', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password })
+              })
+              .then(response => {
+                if (!response.ok) {
+                  throw new Error(\`Login failed: \${response.status}\`);
+                }
+                return response.json();
+              })
+              .then(data => {
+                if (data.accessToken) {
+                  localStorage.setItem('swagger-jwt-token', data.accessToken);
+                  localStorage.setItem('swagger-user', data.user.username);
+                  setAuthToken(data.accessToken, data.user.username);
+                  showStatus(\`Successfully logged in as \${data.user.username}\`, 'success');
+                } else {
+                  throw new Error('No access token received');
+                }
+              })
+              .catch(error => {
+                console.error('Login error:', error);
+                showStatus(\`Login failed: \${error.message}\`, 'error');
+              });
+            };
+            
+            // Global logout function
+            window.swaggerLogout = function() {
+              localStorage.removeItem('swagger-jwt-token');
+              localStorage.removeItem('swagger-user');
+              ui.authActions.logout(['bearerAuth']);
+              document.getElementById('login-fields').style.display = 'block';
+              document.getElementById('logout-section').style.display = 'none';
+              showStatus('Logged out successfully', 'info');
+            };
+            
+            // Function to validate and set token
+            function validateAndSetToken(token) {
+              const username = localStorage.getItem('swagger-user') || 'Unknown';
+              
+              // Validate token by calling /auth/me
+              fetch('/auth/me', {
+                headers: {
+                  'Authorization': \`Bearer \${token}\`
+                }
+              })
+              .then(response => {
+                if (response.ok) {
+                  return response.json();
+                } else {
+                  throw new Error('Token invalid');
+                }
+              })
+              .then(data => {
+                setAuthToken(token, data.username);
+                showStatus(\`Restored session for \${data.username}\`, 'success');
+              })
+              .catch(() => {
+                localStorage.removeItem('swagger-jwt-token');
+                localStorage.removeItem('swagger-user');
+                showStatus('Previous session expired', 'error');
+              });
+            }
+            
+            // Function to set auth token in Swagger UI
+            function setAuthToken(token, username) {
+              ui.authActions.authorize({
+                bearerAuth: {
+                  name: 'bearerAuth',
+                  schema: {
+                    type: 'http',
+                    scheme: 'bearer'
+                  },
+                  value: token
+                }
+              });
+              
+              document.getElementById('login-fields').style.display = 'none';
+              document.getElementById('logout-section').style.display = 'block';
+              document.getElementById('current-user').textContent = username;
+            }
+            
+            // Function to show status messages
+            function showStatus(message, type) {
+              const statusDiv = document.getElementById('login-status');
+              statusDiv.textContent = message;
+              statusDiv.className = \`status-\${type}\`;
+              statusDiv.style.display = 'block';
+              
+              if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                  statusDiv.style.display = 'none';
+                }, 3000);
+              }
+            }
+            
+            // Add Enter key support for login form
+            document.addEventListener('keypress', function(e) {
+              if (e.key === 'Enter' && (e.target.id === 'username' || e.target.id === 'password')) {
+                swaggerLogin();
+              }
+            });
+            
+          }, 1000);
+        };
+      `,
+      swaggerOptions: {
+        persistAuthorization: true,
+        displayRequestDuration: true,
+        docExpansion: 'list',
+        filter: true,
+        showExtensions: true,
+        showCommonExtensions: true,
+        tryItOutEnabled: true
+      }
+    };
+    
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, swaggerUiOptions));
     app.get('/api-docs.json', (req, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.send(specs);
@@ -231,6 +734,9 @@ export class Server {
       console.log(`Using filesystem storage: ${dir}`)
     }
 
+    // Store reference to storage adapter for API access
+    this.#storageAdapter = storageAdapter
+
     const config = {
       network: [new NodeWSServerAdapter(this.#socket)],
       storage: storageAdapter,
@@ -246,6 +752,7 @@ export class Server {
      * @swagger
      * /:
      *   get:
+     *     tags: [System]
      *     summary: Health check endpoint
      *     description: Returns a simple message confirming the server is running
      *     responses:
@@ -265,6 +772,7 @@ export class Server {
      * @swagger
      * /ws-info:
      *   get:
+     *     tags: [WebSocket]
      *     summary: WebSocket connection information
      *     description: Get information about WebSocket connectivity and authentication requirements
      *     responses:
@@ -314,8 +822,9 @@ export class Server {
      * @swagger
      * /api/projects:
      *   get:
+     *     tags: [Projects]
      *     summary: List all projects
-     *     description: Retrieve a list of all available projects
+     *     description: Retrieve a list of all available projects from Automerge document storage
      *     security:
      *       - bearerAuth: []
      *     responses:
@@ -326,32 +835,70 @@ export class Server {
      *             schema:
      *               type: array
      *               items:
-     *                 type: object
-     *                 properties:
-     *                   id:
-     *                     type: string
-     *                     description: Project ID
-     *                   name:
-     *                     type: string
-     *                     description: Project name
-     *                   created:
-     *                     type: string
-     *                     format: date-time
-     *                     description: Creation timestamp
+     *                 $ref: '#/components/schemas/Project'
      *       401:
      *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
      *       403:
      *         description: Forbidden - Insufficient permissions
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error - Database connection issues or other server errors
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
      */
-    app.get("/api/projects", authenticateToken, requirePermission('read'), (req, res) => {
-      // For now, return an empty array - this would connect to actual project storage
-      res.json([])
+    app.get("/api/projects", authenticateToken, requirePermission('read'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          // Fallback to old method if project service not available
+          const projects = await this.listAutomergeDocuments()
+          return res.json(projects)
+        }
+
+        const userId = req.user.sub // User ID from JWT token
+        const limit = parseInt(req.query.limit) || 50
+        const offset = parseInt(req.query.offset) || 0
+
+        const projects = await this.#projectService.getUserProjects(userId, { limit, offset })
+        res.json(projects)
+      } catch (error) {
+        console.error('Error listing projects:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to retrieve projects',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
+      }
     })
 
     /**
      * @swagger
      * /api/projects:
      *   post:
+     *     tags: [Projects]
      *     summary: Create a new project
      *     description: Create a new project with the specified name
      *     security:
@@ -379,100 +926,141 @@ export class Server {
      *         content:
      *           application/json:
      *             schema:
-     *               type: object
-     *               properties:
-     *                 id:
-     *                   type: string
-     *                   description: Generated project ID
-     *                 name:
-     *                   type: string
-     *                   description: Project name
-     *                 description:
-     *                   type: string
-     *                   description: Project description
-     *                 created:
-     *                   type: string
-     *                   format: date-time
-     *                   description: Creation timestamp
+     *               $ref: '#/components/schemas/Project'
      *       400:
-     *         description: Bad request - Missing or invalid data
+     *         description: Bad request - Missing or invalid data (e.g., missing project name, invalid user reference)
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ValidationError'
      *       401:
      *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
      *       403:
      *         description: Forbidden - Insufficient permissions
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       409:
+     *         description: Conflict - Project name already exists
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ConflictError'
+     *       500:
+     *         description: Internal server error - Database connection issues or other server errors
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
      */
-    app.post("/api/projects", authenticateToken, requirePermission('write'), (req, res) => {
-      const { name, description } = req.body
-      
-      if (!name) {
-        return res.status(400).json({ error: 'Project name is required' })
+    app.post("/api/projects", authenticateToken, requirePermission('write'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { name, description, settings = {}, metadata = {} } = req.body
+        const userId = req.user.sub // User ID from JWT token
+        
+        if (!name) {
+          return res.status(400).json({ error: 'Project name is required' })
+        }
+        
+        const project = await this.#projectService.createProject({
+          name,
+          description,
+          ownerId: userId,
+          settings,
+          metadata
+        })
+        
+        res.status(201).json(project)
+      } catch (error) {
+        console.error('Error creating project:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '23505') { // Unique constraint violation
+          return res.status(409).json({ error: 'A project with this name already exists' })
+        }
+        
+        if (error.code === '23503') { // Foreign key constraint violation
+          return res.status(400).json({ error: 'Invalid user ID or reference data' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        if (error.message.includes('already exists')) {
+          return res.status(409).json({ error: error.message })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to create project',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
       }
-      
-      // For now, return a mock response - this would connect to actual project storage
-      const project = {
-        id: `project_${Date.now()}`,
-        name,
-        description,
-        created: new Date().toISOString()
-      }
-      
-      res.status(201).json(project)
     })
 
     /**
      * @swagger
      * /auth/login:
      *   post:
+     *     tags: [Authentication]
      *     summary: User login
-     *     description: Authenticate a user with username and password
+     *     description: 'Authenticate a user with username and password. Default credentials: admin/admin123. Use the login form above for quick authentication.'
      *     requestBody:
      *       required: true
      *       content:
      *         application/json:
      *           schema:
-     *             type: object
-     *             required:
-     *               - username
-     *               - password
-     *             properties:
-     *               username:
-     *                 type: string
-     *                 description: Username
-     *                 example: "admin"
-     *               password:
-     *                 type: string
-     *                 description: Password
-     *                 example: "admin123"
+     *             $ref: '#/components/schemas/LoginRequest'
      *     responses:
      *       200:
      *         description: Login successful
      *         content:
      *           application/json:
      *             schema:
-     *               type: object
-     *               properties:
-     *                 message:
-     *                   type: string
-     *                   example: "Login successful"
-     *                 accessToken:
-     *                   type: string
-     *                   description: JWT access token
-     *                 refreshToken:
-     *                   type: string
-     *                   description: JWT refresh token
-     *                 user:
-     *                   type: object
-     *                   properties:
-     *                     username:
-     *                       type: string
-     *                     permissions:
-     *                       type: array
-     *                       items:
-     *                         type: string
+     *               $ref: '#/components/schemas/LoginResponse'
+     *       400:
+     *         description: Bad request - Missing username or password
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ValidationError'
      *       401:
      *         description: Invalid credentials
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
      *       500:
-     *         description: Internal server error
+     *         description: Internal server error - Database connection issues
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Authentication service not available
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
      */
     app.post("/auth/login", async (req, res) => {
       try {
@@ -535,6 +1123,7 @@ export class Server {
      * @swagger
      * /auth/me:
      *   get:
+     *     tags: [Authentication]
      *     summary: Get current user information
      *     description: Get information about the currently authenticated user
      *     security:
@@ -560,6 +1149,10 @@ export class Server {
      *                   description: User profile information
      *       401:
      *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      */
     app.get("/auth/me", authenticateToken, (req, res) => {
       res.json({
@@ -573,6 +1166,7 @@ export class Server {
      * @swagger
      * /auth/refresh:
      *   post:
+     *     tags: [Authentication]
      *     summary: Refresh access token
      *     description: Exchange a refresh token for a new access token
      *     requestBody:
@@ -600,8 +1194,16 @@ export class Server {
      *                   description: New JWT access token
      *       401:
      *         description: Invalid or expired refresh token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      *       500:
      *         description: Internal server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      */
     app.post("/auth/refresh", async (req, res) => {
       try {
@@ -657,6 +1259,7 @@ export class Server {
      * @swagger
      * /auth/change-password:
      *   post:
+     *     tags: [Authentication]
      *     summary: Change user password
      *     description: Change the password for the currently authenticated user
      *     security:
@@ -690,10 +1293,22 @@ export class Server {
      *                   example: "Password changed successfully"
      *       400:
      *         description: Bad request - Missing required fields
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      *       401:
      *         description: Unauthorized - Invalid current password
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      *       500:
      *         description: Internal server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      */
     app.post("/auth/change-password", authenticateToken, async (req, res) => {
       try {
@@ -731,8 +1346,252 @@ export class Server {
 
     /**
      * @swagger
+     * /auth/users:
+     *   get:
+     *     tags: [User Management]
+     *     summary: List all users
+     *     description: Get a list of all users in the system. Requires admin permissions.
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *           minimum: 1
+     *           maximum: 100
+     *           default: 50
+     *         description: Maximum number of users to return
+     *       - in: query
+     *         name: offset
+     *         schema:
+     *           type: integer
+     *           minimum: 0
+     *           default: 0
+     *         description: Number of users to skip for pagination
+     *     responses:
+     *       200:
+     *         description: List of users
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 users:
+     *                   type: array
+     *                   items:
+     *                     $ref: '#/components/schemas/User'
+     *                 pagination:
+     *                   type: object
+     *                   properties:
+     *                     limit:
+     *                       type: integer
+     *                     offset:
+     *                       type: integer
+     *                     total:
+     *                       type: integer
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       403:
+     *         description: Forbidden - Insufficient permissions (admin required)
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     */
+    app.get("/auth/users", authenticateToken, requirePermission('admin'), async (req, res) => {
+      try {
+        const limit = parseInt(req.query.limit) || 50
+        const offset = parseInt(req.query.offset) || 0
+
+        // Validate parameters
+        if (limit < 1 || limit > 100) {
+          return res.status(400).json({ error: 'Limit must be between 1 and 100' })
+        }
+        if (offset < 0) {
+          return res.status(400).json({ error: 'Offset must be non-negative' })
+        }
+
+        // Initialize auth system if not already done
+        if (!this.userService) {
+          await this.initializeAuthSystem()
+        }
+
+        if (this.useDatabase && this.userService) {
+          // Use database user service
+          const users = await this.userService.listUsers(limit, offset)
+          
+          // Get total count for pagination
+          const countResult = await this.userService.db.query('SELECT COUNT(*) FROM users')
+          const total = parseInt(countResult.rows[0].count)
+
+          res.json({
+            users: users.map(user => ({
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              permissions: user.permissions,
+              is_active: user.is_active,
+              created_at: user.created_at,
+              last_login: user.last_login
+            })),
+            pagination: {
+              limit,
+              offset,
+              total
+            }
+          })
+        } else {
+          // File-based fallback
+          const users = getAllUsers()
+          const usersArray = Object.entries(users).map(([username, userData]) => ({
+            id: username, // In file-based mode, username is the ID
+            username,
+            email: userData.email || null,
+            permissions: userData.permissions || [],
+            is_active: true, // File-based mode doesn't have deactivation
+            created_at: userData.created_at || null,
+            last_login: userData.last_login || null
+          }))
+
+          const startIndex = offset
+          const endIndex = offset + limit
+          const paginatedUsers = usersArray.slice(startIndex, endIndex)
+
+          res.json({
+            users: paginatedUsers,
+            pagination: {
+              limit,
+              offset,
+              total: usersArray.length
+            }
+          })
+        }
+      } catch (error) {
+        console.error('List users error:', error)
+        res.status(500).json({ error: 'Internal server error' })
+      }
+    })
+
+    /**
+     * @swagger
+     * /auth/users/{userId}:
+     *   delete:
+     *     tags: [User Management]
+     *     summary: Delete a user
+     *     description: Permanently delete a user from the system. This action is irreversible and will delete all user data including tokens, sessions, and audit logs. Requires admin permissions.
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: userId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: User ID to delete
+     *     responses:
+     *       200:
+     *         description: User deleted successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "User deleted successfully"
+     *                 userId:
+     *                   type: string
+     *                   description: ID of the deleted user
+     *       400:
+     *         description: Bad request - Invalid user ID or cannot delete own account
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       403:
+     *         description: Forbidden - Insufficient permissions (admin required)
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       404:
+     *         description: User not found
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     */
+    app.delete("/auth/users/:userId", authenticateToken, requirePermission('admin'), async (req, res) => {
+      try {
+        const { userId } = req.params
+
+        if (!userId) {
+          return res.status(400).json({ error: 'User ID is required' })
+        }
+
+        // Prevent users from deleting their own account
+        if (req.user.sub === userId) {
+          return res.status(400).json({ error: 'Cannot delete your own account' })
+        }
+
+        // Initialize auth system if not already done
+        if (!this.userService) {
+          await this.initializeAuthSystem()
+        }
+
+        if (this.useDatabase && this.userService) {
+          // Use database user service
+          const success = await this.userService.deleteUser(userId)
+          if (!success) {
+            return res.status(404).json({ error: 'User not found' })
+          }
+        } else {
+          // File-based fallback - not implemented for security reasons
+          return res.status(501).json({ error: 'User deletion not supported in file-based mode' })
+        }
+
+        res.json({ 
+          message: 'User deleted successfully',
+          userId: userId
+        })
+      } catch (error) {
+        console.error('Delete user error:', error)
+        if (error.message === 'User not found') {
+          res.status(404).json({ error: 'User not found' })
+        } else {
+          res.status(500).json({ error: 'Internal server error' })
+        }
+      }
+    })
+
+    /**
+     * @swagger
      * /api/project/{projectId}:
      *   get:
+     *     tags: [Projects]
      *     summary: Get specific project
      *     description: Retrieve details of a specific project by ID
      *     security:
@@ -750,46 +1609,82 @@ export class Server {
      *         content:
      *           application/json:
      *             schema:
-     *               type: object
-     *               properties:
-     *                 id:
-     *                   type: string
-     *                   description: Project ID
-     *                 name:
-     *                   type: string
-     *                   description: Project name
-     *                 description:
-     *                   type: string
-     *                   description: Project description
-     *                 created:
-     *                   type: string
-     *                   format: date-time
-     *                   description: Creation timestamp
+     *               $ref: '#/components/schemas/Project'
      *       401:
      *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
      *       403:
      *         description: Forbidden - Insufficient permissions
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      *       404:
-     *         description: Project not found
+     *         description: Project not found or access denied
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error - Invalid UUID format or database connection issues
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
      */
-    app.get("/api/project/:projectId", authenticateToken, requirePermission('read'), (req, res) => {
-      const { projectId } = req.params
-      
-      // For now, return a mock response - this would connect to actual project storage
-      const project = {
-        id: projectId,
-        name: `Project ${projectId}`,
-        description: `Description for project ${projectId}`,
-        created: new Date().toISOString()
+    app.get("/api/project/:projectId", authenticateToken, requirePermission('read'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { projectId } = req.params
+        const userId = req.user.sub // User ID from JWT token
+        
+        const project = await this.#projectService.getProject(projectId, userId)
+        
+        if (!project) {
+          return res.status(404).json({ error: 'Project not found or access denied' })
+        }
+        
+        res.json(project)
+      } catch (error) {
+        console.error('Error getting project:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        if (error.message.includes('not found') || error.message.includes('access denied')) {
+          return res.status(404).json({ error: error.message })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to retrieve project',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
       }
-      
-      res.json(project)
     })
 
     /**
      * @swagger
      * /api/project/{projectId}:
      *   delete:
+     *     tags: [Projects]
      *     summary: Delete specific project
      *     description: Delete a specific project by ID
      *     security:
@@ -817,22 +1712,406 @@ export class Server {
      *                   description: Deleted project ID
      *       401:
      *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
      *       403:
-     *         description: Forbidden - Insufficient permissions
+     *         description: Forbidden - Insufficient permissions or not project owner
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
      *       404:
-     *         description: Project not found
+     *         description: Project not found or access denied
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error - Invalid UUID format or database connection issues
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
      */
-    app.delete("/api/project/:projectId", authenticateToken, requirePermission('delete'), (req, res) => {
-      const { projectId } = req.params
-      
-      // For now, return a success response - this would connect to actual project storage
-      res.json({
-        message: 'Project deleted successfully',
-        id: projectId
-      })
+    app.delete("/api/project/:projectId", authenticateToken, requirePermission('delete'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { projectId } = req.params
+        const userId = req.user.sub // User ID from JWT token
+        
+        const deleted = await this.#projectService.deleteProject(projectId, userId)
+        
+        if (!deleted) {
+          return res.status(404).json({ error: 'Project not found or access denied' })
+        }
+        
+        res.json({
+          message: 'Project deleted successfully',
+          id: projectId
+        })
+      } catch (error) {
+        console.error('Error deleting project:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        if (error.message.includes('not found') || error.message.includes('access denied')) {
+          return res.status(404).json({ error: error.message })
+        }
+        
+        if (error.message.includes('owner')) {
+          return res.status(403).json({ error: error.message })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to delete project',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
+      }
     })
 
-    this.#server = app.listen(PORT, () => {
+    /**
+     * @swagger
+     * /api/project/{projectId}/documents:
+     *   get:
+     *     tags: [Projects]
+     *     summary: Get project documents
+     *     description: Retrieve all documents for a specific project
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Project ID
+     *     responses:
+     *       200:
+     *         description: List of project documents
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: array
+     *               items:
+     *                 type: object
+     *                 properties:
+     *                   id:
+     *                     type: string
+     *                   documentId:
+     *                     type: string
+     *                   name:
+     *                     type: string
+     *                   description:
+     *                     type: string
+     *                   documentType:
+     *                     type: string
+     *                   createdAt:
+     *                     type: string
+     *                     format: date-time
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
+     *       403:
+     *         description: Forbidden - Insufficient permissions to view documents
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       404:
+     *         description: Project not found
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       500:
+     *         description: Internal server error - Invalid UUID format or database connection issues
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     */
+    app.get("/api/project/:projectId/documents", authenticateToken, requirePermission('read'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { projectId } = req.params
+        const userId = req.user.sub
+
+        const documents = await this.#projectService.getProjectDocuments(projectId, userId)
+        res.json(documents)
+      } catch (error) {
+        console.error('Error getting project documents:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        if (error.message.includes('permission')) {
+          return res.status(403).json({ error: error.message })
+        }
+        
+        if (error.message.includes('not found')) {
+          return res.status(404).json({ error: error.message })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to retrieve project documents',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
+      }
+    })
+
+    /**
+     * @swagger
+     * /api/project/{projectId}/documents:
+     *   post:
+     *     tags: [Projects]
+     *     summary: Add document to project
+     *     description: Add an Automerge document to a project
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Project ID
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - documentId
+     *               - name
+     *             properties:
+     *               documentId:
+     *                 type: string
+     *                 description: Automerge document ID
+     *               name:
+     *                 type: string
+     *                 description: Document name
+     *               description:
+     *                 type: string
+     *                 description: Document description
+     *               documentType:
+     *                 type: string
+     *                 description: Document type
+     *                 default: automerge-document
+     *               metadata:
+     *                 type: object
+     *                 description: Document metadata
+     *     responses:
+     *       201:
+     *         description: Document added successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 id:
+     *                   type: string
+     *                 documentId:
+     *                   type: string
+     *                 name:
+     *                   type: string
+     *                 projectId:
+     *                   type: string
+     *       400:
+     *         description: Bad request - Missing required fields
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ValidationError'
+     *       401:
+     *         description: Unauthorized - Invalid or missing token
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/AuthenticationError'
+     *       403:
+     *         description: Forbidden - Insufficient permissions to add documents
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/Error'
+     *       409:
+     *         description: Conflict - Document ID already exists or name already used
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/ConflictError'
+     *       500:
+     *         description: Internal server error - Database connection issues
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     *       503:
+     *         description: Service unavailable - Database connection unavailable or schema not initialized
+     *         content:
+     *           application/json:
+     *             schema:
+     *               $ref: '#/components/schemas/DatabaseError'
+     */
+    app.post("/api/project/:projectId/documents", authenticateToken, requirePermission('write'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { projectId } = req.params
+        const { documentId, name, description, documentType, metadata = {} } = req.body
+        const userId = req.user.sub
+
+        if (!documentId || !name) {
+          return res.status(400).json({ error: 'documentId and name are required' })
+        }
+
+        const document = await this.#projectService.addDocument({
+          projectId,
+          documentId,
+          name,
+          description,
+          documentType,
+          metadata,
+          userId
+        })
+
+        res.status(201).json(document)
+      } catch (error) {
+        console.error('Error adding document to project:', error)
+        
+        // Handle specific database errors
+        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+          return res.status(503).json({ error: 'Database connection unavailable' })
+        }
+        
+        if (error.code === '23505') { // Unique constraint violation
+          return res.status(409).json({ error: 'Document already exists in this project' })
+        }
+        
+        if (error.code === '23503') { // Foreign key constraint violation
+          return res.status(400).json({ error: 'Invalid project ID or document reference' })
+        }
+        
+        if (error.code === '42P01') { // relation does not exist
+          return res.status(503).json({ error: 'Database schema not properly initialized' })
+        }
+        
+        if (error.message.includes('permission')) {
+          return res.status(403).json({ error: error.message })
+        }
+        
+        if (error.message.includes('already exists')) {
+          return res.status(409).json({ error: error.message })
+        }
+        
+        if (error.message.includes('not found')) {
+          return res.status(404).json({ error: error.message })
+        }
+        
+        res.status(500).json({ 
+          error: 'Failed to add document to project',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        })
+      }
+    })
+
+    /**
+     * @swagger
+     * /api/documents/{documentId}:
+     *   delete:
+     *     tags: [Projects]
+     *     summary: Remove document from project
+     *     description: Remove a document from its project
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: documentId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Document ID (database ID, not Automerge document ID)
+     *     responses:
+     *       200:
+     *         description: Document removed successfully
+     *       401:
+     *         $ref: '#/components/schemas/Error'
+     *       403:
+     *         $ref: '#/components/schemas/Error'
+     *       404:
+     *         $ref: '#/components/schemas/Error'
+     */
+    app.delete("/api/documents/:documentId", authenticateToken, requirePermission('write'), async (req, res) => {
+      try {
+        if (!this.useProjectService) {
+          return res.status(503).json({ error: 'Project management service not available' })
+        }
+
+        const { documentId } = req.params
+        const userId = req.user.sub
+
+        const removed = await this.#projectService.removeDocument(documentId, userId)
+
+        if (!removed) {
+          return res.status(404).json({ error: 'Document not found or access denied' })
+        }
+
+        res.json({ message: 'Document removed successfully' })
+      } catch (error) {
+        console.error('Error removing document:', error)
+        
+        if (error.message.includes('permission')) {
+          return res.status(403).json({ error: error.message })
+        }
+        
+        if (error.message.includes('not found')) {
+          return res.status(404).json({ error: error.message })
+        }
+        
+        res.status(500).json({ error: 'Failed to remove document' })
+      }
+    })
+
+    this.#server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Listening on port ${PORT}`)
       console.log(`Max connections: ${maxConnections}`)
       console.log(`Heartbeat interval: ${heartbeatInterval}ms`)
@@ -860,6 +2139,138 @@ export class Server {
 
     process.on('SIGTERM', gracefulShutdown)
     process.on('SIGINT', gracefulShutdown)
+  }
+
+  /**
+   * List all available Automerge documents from storage
+   * @returns {Promise<Array>} Array of project objects
+   */
+  async listAutomergeDocuments() {
+    try {
+      const projects = []
+      
+      // Use the stored storage adapter reference
+      if (!this.#storageAdapter) {
+        console.warn('No storage adapter available')
+        return []
+      }
+
+      // For filesystem storage, we need to scan directories to find document IDs
+      // For R2 storage, we use loadRange with empty prefix to list all documents
+      let documentIds = new Set()
+
+      if (process.env.USE_R2_STORAGE === "true") {
+        // R2 storage: use loadRange to scan all objects
+        try {
+          console.log('Scanning R2 storage for documents...')
+          const chunks = await this.#storageAdapter.loadRange([])
+          console.log(`Found ${chunks.length} chunks in R2 storage`)
+          
+          // Extract unique document IDs from the chunk keys
+          for (const chunk of chunks) {
+            if (chunk.key && chunk.key.length > 0) {
+              // Document ID is typically the first part of the key
+              const documentId = chunk.key[0]
+              if (documentId && documentId.length > 10) { // Basic validation for document ID format
+                documentIds.add(documentId)
+                console.log(`Found document ID: ${documentId}`)
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error scanning R2 storage:', error)
+        }
+      } else {
+        // Filesystem storage: scan the data directory
+        const dataDir = process.env.DATA_DIR || ".amrg"
+        try {
+          if (fs.existsSync(dataDir)) {
+            const entries = fs.readdirSync(dataDir, { withFileTypes: true })
+            
+            for (const entry of entries) {
+              if (entry.isDirectory() && entry.name.length >= 2) {
+                // This is a potential document ID prefix directory
+                const prefixDir = `${dataDir}/${entry.name}`
+                const subEntries = fs.readdirSync(prefixDir, { withFileTypes: true })
+                
+                for (const subEntry of subEntries) {
+                  if (subEntry.isDirectory()) {
+                    // The subdirectory name should be the rest of the document ID
+                    const documentId = entry.name + subEntry.name
+                    if (documentId.length > 10) { // Basic validation
+                      documentIds.add(documentId)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error scanning filesystem storage:', error)
+        }
+      }
+
+      console.log(`Found ${documentIds.size} unique document IDs`)
+
+      // For each document ID, try to load the document and extract metadata
+      for (const documentId of documentIds) {
+        try {
+          // Try to get the document from the repo
+          const handle = this.#repo.find(documentId)
+          
+          // Wait a bit for the document to load
+          await Promise.race([
+            handle.whenReady(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1000))
+          ])
+          
+          const doc = handle.docSync()
+          
+          if (doc) {
+            // Extract project information from the document
+            const project = {
+              id: documentId,
+              name: doc.title || doc.name || doc.projectName || `Document ${documentId.substring(0, 8)}`,
+              title: doc.title || undefined,
+              description: doc.description || undefined,
+              content: doc.content ? (typeof doc.content === 'string' ? doc.content.substring(0, 100) : 'Document has content') : undefined,
+              created: doc.timestamp || doc.createdAt || doc.created || undefined,
+              documentType: doc.type || 'automerge-document',
+              lastModified: doc.lastModified || doc.updatedAt || undefined,
+              version: doc.version || undefined,
+              items: Array.isArray(doc.items) ? doc.items.length : undefined
+            }
+            
+            projects.push(project)
+            console.log(`Successfully loaded document: ${project.name}`)
+          }
+        } catch (error) {
+          // If we can't load the document, still include basic info
+          console.log(`Could not load full document ${documentId}:`, error.message)
+          projects.push({
+            id: documentId,
+            name: `Document ${documentId.substring(0, 8)}`,
+            documentType: 'automerge-document',
+            status: 'metadata-unavailable'
+          })
+        }
+      }
+
+      // Sort projects by name or creation date
+      projects.sort((a, b) => {
+        if (a.created && b.created) {
+          return new Date(b.created).getTime() - new Date(a.created).getTime()
+        }
+        return a.name.localeCompare(b.name)
+      })
+
+      console.log(`Returning ${projects.length} projects`)
+      return projects
+      
+    } catch (error) {
+      console.error('Error listing Automerge documents:', error)
+      return []
+    }
   }
 
   async ready() {
@@ -919,6 +2330,28 @@ export class Server {
       initializeUsers()
       this.useDatabase = false
       console.log('✅ File-based authentication system ready')
+    }
+  }
+
+  /**
+   * Initialize project management system
+   */
+  async initializeProjectService() {
+    try {
+      this.#projectService = getProjectService()
+      const initialized = await this.#projectService.initialize()
+      
+      if (initialized) {
+        console.log('✅ Database project service initialized')
+        this.useProjectService = true
+      } else {
+        throw new Error('Database not available')
+      }
+    } catch (error) {
+      console.log('⚠️  Database project service failed to initialize')
+      console.log('   Reason:', error.message)
+      console.log('   Project management will be disabled')
+      this.useProjectService = false
     }
   }
 }

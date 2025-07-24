@@ -385,6 +385,73 @@ export class DatabaseUserService {
   }
 
   /**
+   * Permanently delete a user from the database
+   * WARNING: This action is irreversible and will delete all user data
+   */
+  async deleteUser(userId) {
+    if (!this.isReady) {
+      throw new Error('Database service not initialized')
+    }
+
+    try {
+      // Begin transaction to ensure data consistency
+      await this.db.query('BEGIN')
+
+      // Get user info before deletion for logging
+      const userResult = await this.db.query(`
+        SELECT username, email FROM users WHERE id = $1
+      `, [userId])
+
+      if (userResult.rows.length === 0) {
+        await this.db.query('ROLLBACK')
+        throw new Error('User not found')
+      }
+
+      const { username, email } = userResult.rows[0]
+
+      // Delete all related data in correct order (respecting foreign keys)
+      
+      // 1. Delete refresh tokens
+      await this.db.query(`DELETE FROM refresh_tokens WHERE user_id = $1`, [userId])
+      
+      // 2. Delete auth audit logs
+      await this.db.query(`DELETE FROM auth_audit_log WHERE user_id = $1`, [userId])
+      
+      // 3. Delete user sessions
+      await this.db.query(`DELETE FROM user_sessions WHERE user_id = $1`, [userId])
+      
+      // 4. Finally delete the user
+      const deleteResult = await this.db.query(`
+        DELETE FROM users WHERE id = $1
+        RETURNING username
+      `, [userId])
+
+      if (deleteResult.rows.length === 0) {
+        await this.db.query('ROLLBACK')
+        throw new Error('Failed to delete user')
+      }
+
+      // Commit transaction
+      await this.db.query('COMMIT')
+
+      // Log successful deletion (this will create a new audit entry)
+      await this.db.logAuthEvent({
+        userId: null, // User no longer exists
+        username: username,
+        action: 'user_deleted',
+        success: true,
+        details: { deleted_user: username, deleted_email: email }
+      })
+
+      return true
+    } catch (error) {
+      // Rollback on any error
+      await this.db.query('ROLLBACK')
+      throw error
+    }
+  }
+
+  /**
    * Get authentication statistics
    */
   async getAuthStats(days = 7) {

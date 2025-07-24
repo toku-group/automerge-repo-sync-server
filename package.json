@@ -11,8 +11,14 @@
     "dev": "nodemon ./src/index.js",
     "setup:db": "node scripts/setup-database.js",
     "setup:db:wait": "sleep 15 && npm run setup:db",
-    "test:db": "node test-database-integration.js",
-    "health": "node health-check.js"
+    
+    "test:all": "node test-suite.js all",
+    "test:basic": "node test-suite.js basic",
+    "test:auth": "node test-suite.js auth",
+    "test:api": "node test-suite.js api",
+    "test:db": "node tests/database.test.js",
+    "test:storage": "node tests/storage.test.js",
+    "test:mocha": "node test-suite.js mocha"
   },
   "files": [
     "src/index.js",
@@ -26,6 +32,7 @@
     "@automerge/automerge-repo-network-websocket": "^1.2.0",
     "@automerge/automerge-repo-storage-nodefs": "^1.2.0",
     "@aws-sdk/client-s3": "^3.846.0",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.0",
     "express": "^4.18.1",
     "glob": "10.3.10",
