@@ -1,20 +1,22 @@
 # Development Container Setup
 
-This directory contains the configuration for a complete development environment using VS Code devcontainers with PostgreSQL database integration.
+This directory contains the configuration for a complete development environment using VS Code devcontainers with PostgreSQL and Neo4j database integration.
 
 ## What's Included
 
 ### Services
 - **Node.js Container** - Main development environment with Node.js 22
-- **PostgreSQL Container** - Database server with automatic initialization
+- **PostgreSQL Container** - Relational database server with automatic initialization
+- **Neo4j Container** - Graph database server for document structure analysis
 - **Network** - Isolated Docker network for service communication
 
 ### Features
 - PostgreSQL client tools pre-installed
+- Neo4j browser interface available at http://localhost:7474
 - VS Code extensions for development
 - Automatic database schema creation
 - Default admin and test users
-- Health checks and monitoring
+- Health checks and monitoring for both databases
 
 ## Quick Start
 
@@ -22,12 +24,16 @@ This directory contains the configuration for a complete development environment
    - Open VS Code in this repository
    - Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
    - Select "Dev Containers: Reopen in Container"
-   - Wait for containers to build and start
+   - Wait for containers to build and start (Neo4j may take 1-2 minutes to fully initialize)
 
 2. **Verify Setup**
    ```bash
-   # Check database connection
+   # Check PostgreSQL connection
    psql $DATABASE_URL -c "SELECT db_ready();"
+   
+   # Check Neo4j connection (after container is fully started)
+   curl -u neo4j:neo4j123 http://neo4j:7474/db/data/
+   ```
    
    # Test authentication system
    npm run test:db
@@ -51,11 +57,28 @@ The devcontainer uses `.devcontainer/.env` for configuration:
 - CORS configured for common development ports
 
 ### Database
+### PostgreSQL Connection Details
 - **Host**: postgres (container name)
 - **Database**: automerge_sync
 - **User**: postgres
 - **Password**: postgres
 - **Port**: 5432
+
+### Neo4j Connection Details
+- **Host**: neo4j (container name)
+- **URI**: bolt://neo4j:7687
+- **User**: neo4j
+- **Password**: neo4j123
+- **HTTP Port**: 7474 (Neo4j Browser)
+- **Bolt Port**: 7687 (Database connection)
+
+### Access Neo4j Browser
+Once the container is running, you can access the Neo4j browser interface at:
+http://localhost:7474
+
+Login with:
+- Username: `neo4j`
+- Password: `neo4j123`
 
 ### Default Users
 Created automatically on first setup:

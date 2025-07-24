@@ -1,5 +1,5 @@
 import 'dotenv/config'
-console.log(process.env)
+// console.log(process.env) // Commented out to prevent terminal overflow
 
 // @ts-check
 import fs from "fs"
@@ -33,6 +33,8 @@ import {
 } from "./auth/users.js"
 import { getUserService } from "./auth/DatabaseUserService.js"
 import { getProjectService } from "./database/ProjectService.js"
+import { getNeo4jService } from "./database/Neo4jService.js"
+import { GraphAnalysisController } from "./controllers/GraphAnalysisController.js"
 
 export class Server {
   /** @type WebSocketServer */
@@ -55,18 +57,36 @@ export class Server {
   /** @type {import("./database/ProjectService.js").ProjectService} */
   #projectService
 
+  /** @type {import("./database/Neo4jService.js").Neo4jService} */
+  #neo4jService
+
   constructor() {
+    console.log('🚀 Server constructor starting...')
     var hostname = os.hostname()
 
     // Initialize user system (database-first, fallback to file-based)
     console.log('Initializing JWT authentication system...')
-    this.initializeAuthSystem()
-    console.log('✅ Authentication system ready')
+    this.initializeAuthSystem().then(() => {
+      console.log('✅ Authentication system ready')
+    }).catch(error => {
+      console.log('⚠️  Authentication system initialization failed:', error.message)
+    })
 
     // Initialize project service
     console.log('Initializing project management system...')
-    this.initializeProjectService()
-    console.log('✅ Project management system ready')
+    this.initializeProjectService().then(() => {
+      console.log('✅ Project management system ready')
+    }).catch(error => {
+      console.log('⚠️  Project service initialization failed:', error.message)
+    })
+
+    // Initialize Neo4j graph database service
+    console.log('Initializing Neo4j graph database service...')
+    this.initializeNeo4jService().then(() => {
+      console.log('✅ Neo4j service initialized')
+    }).catch(error => {
+      console.log('⚠️  Neo4j service initialization failed:', error.message)
+    })
 
     // Configure WebSocket server with resource limits
     const maxConnections = process.env.MAX_CONNECTIONS ? parseInt(process.env.MAX_CONNECTIONS) : 100
@@ -251,6 +271,10 @@ export class Server {
           {
             name: 'Projects',
             description: 'Project and document management endpoints',
+          },
+          {
+            name: 'Graph Analysis',
+            description: 'Neo4j graph database analysis and querying endpoints',
           },
         ],
         components: {
@@ -747,6 +771,9 @@ export class Server {
       sharePolicy: async () => false,
     }
     this.#repo = new Repo(config)
+
+    // Set up Neo4j document watching if enabled
+    this.setupNeo4jDocumentWatching()
 
     /**
      * @swagger
@@ -2111,6 +2138,256 @@ export class Server {
       }
     })
 
+    // ==================== GRAPH ANALYSIS API ROUTES ====================
+
+    /**
+     * @swagger
+     * /api/graph/stats:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Get graph database statistics
+     *     description: Retrieve overall statistics about the graph database
+     *     security:
+     *       - bearerAuth: []
+     *     responses:
+     *       200:
+     *         description: Graph statistics retrieved successfully
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 success:
+     *                   type: boolean
+     *                 data:
+     *                   type: object
+     *                   properties:
+     *                     documentCount:
+     *                       type: integer
+     *                     totalNodes:
+     *                       type: integer
+     *                     totalRelationships:
+     *                       type: integer
+     *                     allNodeTypes:
+     *                       type: array
+     *                       items:
+     *                         type: string
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/stats", authenticateToken, requirePermission('read'), GraphAnalysisController.getStatistics)
+
+    /**
+     * @swagger
+     * /api/graph/document/{documentId}/analysis:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Get document analysis from graph
+     *     description: Retrieve graph analysis for a specific document
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: documentId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Document ID
+     *     responses:
+     *       200:
+     *         description: Document analysis retrieved successfully
+     *       404:
+     *         description: Document not found in graph database
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/document/:documentId/analysis", authenticateToken, requirePermission('read'), GraphAnalysisController.getDocumentAnalysis)
+
+    /**
+     * @swagger
+     * /api/graph/document/{documentId}/similar:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Find similar documents
+     *     description: Find documents with similar structure to the given document
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: documentId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Document ID
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *           default: 10
+     *           maximum: 50
+     *         description: Maximum number of results
+     *     responses:
+     *       200:
+     *         description: Similar documents found successfully
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/document/:documentId/similar", authenticateToken, requirePermission('read'), GraphAnalysisController.findSimilarDocuments)
+
+    /**
+     * @swagger
+     * /api/graph/document/{documentId}/structure:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Get document graph structure
+     *     description: Retrieve the graph structure of a document for visualization
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: documentId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Document ID
+     *       - in: query
+     *         name: depth
+     *         schema:
+     *           type: integer
+     *           default: 2
+     *           maximum: 5
+     *         description: Maximum traversal depth
+     *     responses:
+     *       200:
+     *         description: Document graph structure retrieved successfully
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/document/:documentId/structure", authenticateToken, requirePermission('read'), GraphAnalysisController.getDocumentGraph)
+
+    /**
+     * @swagger
+     * /api/graph/nodes/types:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Get node types distribution
+     *     description: Get distribution of node types across documents
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: projectId
+     *         schema:
+     *           type: string
+     *         description: Filter by project ID
+     *     responses:
+     *       200:
+     *         description: Node types distribution retrieved successfully
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/nodes/types", authenticateToken, requirePermission('read'), GraphAnalysisController.getNodeTypesDistribution)
+
+    /**
+     * @swagger
+     * /api/graph/nodes/search:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Search nodes by content
+     *     description: Search for nodes containing specific content
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: searchTerm
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Search term
+     *       - in: query
+     *         name: nodeType
+     *         schema:
+     *           type: string
+     *         description: Filter by node type
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *           default: 50
+     *           maximum: 200
+     *         description: Maximum number of results
+     *     responses:
+     *       200:
+     *         description: Node search completed successfully
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/nodes/search", authenticateToken, requirePermission('read'), GraphAnalysisController.searchNodes)
+
+    /**
+     * @swagger
+     * /api/graph/relationships/patterns:
+     *   get:
+     *     tags: [Graph Analysis]
+     *     summary: Get relationship patterns
+     *     description: Analyze relationship patterns in the graph
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: query
+     *         name: documentId
+     *         schema:
+     *           type: string
+     *         description: Filter by document ID
+     *       - in: query
+     *         name: limit
+     *         schema:
+     *           type: integer
+     *           default: 20
+     *           maximum: 100
+     *         description: Maximum number of results
+     *     responses:
+     *       200:
+     *         description: Relationship patterns retrieved successfully
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.get("/api/graph/relationships/patterns", authenticateToken, requirePermission('read'), GraphAnalysisController.getRelationshipPatterns)
+
+    /**
+     * @swagger
+     * /api/graph/query:
+     *   post:
+     *     tags: [Graph Analysis]
+     *     summary: Execute custom Cypher query (admin only)
+     *     description: Execute a custom Cypher query against the graph database (read-only)
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - query
+     *             properties:
+     *               query:
+     *                 type: string
+     *                 description: Cypher query (read-only operations only)
+     *               parameters:
+     *                 type: object
+     *                 description: Query parameters
+     *     responses:
+     *       200:
+     *         description: Query executed successfully
+     *       403:
+     *         description: Write operations are forbidden
+     *       503:
+     *         description: Graph database service not available
+     */
+    app.post("/api/graph/query", authenticateToken, requirePermission('admin'), GraphAnalysisController.executeQuery)
+
     this.#server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Listening on port ${PORT}`)
       console.log(`Max connections: ${maxConnections}`)
@@ -2352,6 +2629,134 @@ export class Server {
       console.log('   Reason:', error.message)
       console.log('   Project management will be disabled')
       this.useProjectService = false
+    }
+  }
+
+  /**
+   * Initialize Neo4j graph database service
+   */
+  async initializeNeo4jService() {
+    try {
+      this.#neo4jService = getNeo4jService()
+      const initialized = await this.#neo4jService.initialize()
+      
+      if (initialized) {
+        console.log('✅ Neo4j graph database service initialized')
+        this.useNeo4j = true
+      } else {
+        console.log('ℹ️  Neo4j service not configured - graph analysis will be disabled')
+        this.useNeo4j = false
+      }
+    } catch (error) {
+      console.log('⚠️  Neo4j service failed to initialize')
+      console.log('   Reason:', error.message)
+      console.log('   Graph analysis will be disabled')
+      this.useNeo4j = false
+    }
+  }
+
+  /**
+   * Set up Neo4j document watching for Automerge documents
+   */
+  setupNeo4jDocumentWatching() {
+    if (!this.useNeo4j || !this.#neo4jService) {
+      console.log('📊 Neo4j document watching skipped (service not available)')
+      return
+    }
+
+    console.log('📊 Setting up Neo4j document watching...')
+
+    // Watch for new documents being created or loaded
+    this.#repo.on('document', async (documentId) => {
+      try {
+        console.log(`📊 New document detected: ${documentId}`)
+        const handle = this.#repo.find(documentId)
+        
+        // Get project ID if available
+        let projectId = null
+        if (this.useProjectService) {
+          try {
+            // Try to find the project that contains this document
+            const projects = await this.#projectService.getAllProjects()
+            for (const project of projects) {
+              const docs = await this.#projectService.getProjectDocuments(project.id)
+              if (docs.some(doc => doc.documentId === documentId)) {
+                projectId = project.id
+                break
+              }
+            }
+          } catch (error) {
+            console.log(`Could not determine project for document ${documentId}:`, error.message)
+          }
+        }
+
+        // Start watching this document
+        await this.#neo4jService.watchDocument(documentId, handle, projectId)
+        
+      } catch (error) {
+        console.error(`Error setting up Neo4j watching for document ${documentId}:`, error)
+      }
+    })
+
+    // Also watch existing documents if any
+    setTimeout(async () => {
+      try {
+        console.log('📊 Scanning for existing documents to watch...')
+        const documents = await this.listAutomergeDocuments()
+        
+        for (const doc of documents) {
+          try {
+            const handle = this.#repo.find(doc.id)
+            await this.#neo4jService.watchDocument(doc.id, handle, doc.projectId)
+          } catch (error) {
+            console.error(`Error watching existing document ${doc.id}:`, error)
+          }
+        }
+        
+        console.log(`📊 Started watching ${documents.length} existing documents`)
+        
+      } catch (error) {
+        console.error('Error scanning existing documents for Neo4j watching:', error)
+      }
+    }, 5000) // Wait 5 seconds for the repo to be fully initialized
+  }
+
+  /**
+   * Manually trigger Neo4j sync for a document (useful for API endpoints)
+   * @param {string} documentId - Document ID to sync
+   * @returns {Promise<boolean>} Success status
+   */
+  async syncDocumentToNeo4j(documentId) {
+    if (!this.useNeo4j || !this.#neo4jService) {
+      return false
+    }
+
+    try {
+      const handle = this.#repo.find(documentId)
+      
+      // Get project ID if available
+      let projectId = null
+      if (this.useProjectService) {
+        try {
+          const projects = await this.#projectService.getAllProjects()
+          for (const project of projects) {
+            const docs = await this.#projectService.getProjectDocuments(project.id)
+            if (docs.some(doc => doc.documentId === documentId)) {
+              projectId = project.id
+              break
+            }
+          }
+        } catch (error) {
+          console.log(`Could not determine project for document ${documentId}:`, error.message)
+        }
+      }
+
+      await this.#neo4jService.syncDocumentToGraph(documentId, handle, projectId)
+      return true
+      
+    } catch (error) {
+      console.error(`Error manually syncing document ${documentId} to Neo4j:`, error)
+      return false
     }
   }
 }
