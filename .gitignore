@@ -1,5 +1,10 @@
 /node_modules/
 /*.amrg
 
+.env
+.env.local
+
+# Data and logs
 automerge-repo-data
 data
+logs/

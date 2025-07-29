@@ -6,13 +6,8 @@
 	"service": "app",
 	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
-		// Override the default command to keep container running
+	// Override the default command to keep container running
 	"overrideCommand": false,
-
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	"features": {
-		"ghcr.io/devcontainers/features/postgresql-client:1": {}
-	},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [3030, 5432, 7474, 7687],
@@ -20,24 +15,21 @@
 	// Ensure containers start in the right order
 	"waitFor": "postCreateCommand",
 
-		// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "npm install",
-	
-	// Use 'postStartCommand' to run commands after the container is started.
-	"postStartCommand": "bash .devcontainer/setup.sh",
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "echo 'DevContainer ready! Run: npm install && npm run setup:db'",
 
 	// Configure tool-specific properties.
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"ms-vscode.vscode-json",
-				"bradlc.vscode-tailwindcss",
-				"esbenp.prettier-vscode",
-				"ms-vscode.vscode-typescript-next",
-				"ckolkman.vscode-postgres"
-			]
-		}
-	},
+	// "customizations": {
+	// 	"vscode": {
+	// 		"extensions": [
+	// 			"ms-vscode.vscode-json",
+	// 			"bradlc.vscode-tailwindcss",
+	// 			"esbenp.prettier-vscode",
+	// 			"ms-vscode.vscode-typescript-next",
+	// 			"ckolkman.vscode-postgres"
+	// 		]
+	// 	}
+	// },
 
 	// Environment variables for the development container
 	"containerEnv": {

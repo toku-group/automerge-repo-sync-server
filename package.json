@@ -18,7 +18,11 @@
     "test:db": "node tests/database.test.js",
     "test:storage": "node tests/storage.test.js",
     "test:mocha": "node test-suite.js mocha",
-    "test:graph": "node tests/graph.test.js"
+    "test:graph": "node tests/graph.test.js",
+    "logs:stats": "node scripts/analyze-logs.js --stats",
+    "logs:errors": "node scripts/analyze-logs.js --errors --verbose",
+    "logs:slow": "node scripts/analyze-logs.js --slow --verbose",
+    "logs:tail": "node scripts/analyze-logs.js --tail 20"
   },
   "files": [
     "src/index.js",
@@ -27,10 +31,10 @@
   ],
   "bin": "./src/index.js",
   "dependencies": {
-    "@automerge/automerge": "^2.2.4",
-    "@automerge/automerge-repo": "^1.2.0",
-    "@automerge/automerge-repo-network-websocket": "^1.2.0",
-    "@automerge/automerge-repo-storage-nodefs": "^1.2.0",
+    "@automerge/automerge": "^3.0.0",
+    "@automerge/automerge-repo": "^2.1.0",
+    "@automerge/automerge-repo-network-websocket": "^2.1.0",
+    "@automerge/automerge-repo-storage-nodefs": "^2.1.0",
     "@aws-sdk/client-s3": "^3.846.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
@@ -39,6 +43,7 @@
     "jsonwebtoken": "^9.0.2",
     "neo4j-driver": "^5.28.1",
     "node-fetch": "^3.3.2",
+    "npm-check-updates": "^18.0.2",
     "pg": "^8.16.3",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",

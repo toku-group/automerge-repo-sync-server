@@ -35,6 +35,7 @@ import { getUserService } from "./auth/DatabaseUserService.js"
 import { getProjectService } from "./database/ProjectService.js"
 import { getNeo4jService } from "./database/Neo4jService.js"
 import { GraphAnalysisController } from "./controllers/GraphAnalysisController.js"
+import { createRequestLogger } from "./middleware/RequestLogger.js"
 
 export class Server {
   /** @type WebSocketServer */
@@ -225,6 +226,32 @@ export class Server {
     app.use(cors(corsOptions))
     app.use(express.static("public"))
     app.use(express.json()) // Add JSON parsing middleware
+
+    // Extract user info from JWT for logging (non-blocking)
+    app.use((req, res, next) => {
+      try {
+        const token = extractToken(req)
+        if (token) {
+          const decoded = verifyToken(token)
+          req.user = decoded // Add user info for logging
+        }
+      } catch (error) {
+        // Ignore JWT errors here - let auth middleware handle them
+      }
+      next()
+    })
+
+    // Request logging middleware
+    const requestLogger = createRequestLogger({
+      logToFile: true,
+      logToConsole: process.env.NODE_ENV === 'development',
+      logLevel: process.env.LOG_LEVEL || 'info',
+      includeBody: process.env.LOG_INCLUDE_BODY === 'true',
+      includeHeaders: process.env.LOG_INCLUDE_HEADERS === 'true',
+      excludePaths: ['/health', '/favicon.ico', '/api-docs.json'],
+      logDirectory: process.env.LOG_DIRECTORY || './logs'
+    })
+    app.use(requestLogger.middleware())
 
     console.log(process.env.NODE_ENV);
 
@@ -793,6 +820,75 @@ export class Server {
      */
     app.get("/", (req, res) => {
       res.send(`👍 @automerge/automerge-repo-sync-server is running`)
+    })
+
+    /**
+     * @swagger
+     * /health:
+     *   get:
+     *     tags: [System]
+     *     summary: Health check endpoint
+     *     description: Returns server health status including database connections and system information
+     *     responses:
+     *       200:
+     *         description: Server is healthy
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 status:
+     *                   type: string
+     *                   example: "healthy"
+     *                 timestamp:
+     *                   type: string
+     *                   format: date-time
+     *                 uptime:
+     *                   type: number
+     *                   description: Server uptime in seconds
+     *                 memory:
+     *                   type: object
+     *                   properties:
+     *                     used:
+     *                       type: number
+     *                     total:
+     *                       type: number
+     *                 connections:
+     *                   type: object
+     *                   properties:
+     *                     websocket:
+     *                       type: number
+     *                     database:
+     *                       type: string
+     */
+    app.get("/health", async (req, res) => {
+      try {
+        const memUsage = process.memoryUsage()
+        const healthData = {
+          status: "healthy",
+          timestamp: new Date().toISOString(),
+          uptime: process.uptime(),
+          memory: {
+            used: Math.round(memUsage.heapUsed / 1024 / 1024), // MB
+            total: Math.round(memUsage.heapTotal / 1024 / 1024) // MB
+          },
+          connections: {
+            websocket: this.#socket.clients.size,
+            database: this.#projectService ? "connected" : "disconnected",
+            neo4j: this.#neo4jService ? "connected" : "disconnected"
+          },
+          version: process.env.npm_package_version || "unknown"
+        }
+        
+        res.json(healthData)
+      } catch (error) {
+        console.error('Health check error:', error)
+        res.status(500).json({
+          status: "unhealthy",
+          timestamp: new Date().toISOString(),
+          error: "Health check failed"
+        })
+      }
     })
 
     /**
